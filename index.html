@@ -1326,6 +1326,7 @@ function migrateBrand(){
       });
     }
   });
+  if(applyRoomCatalog())changed=true;
   if(DB.auth&&DB.auth.pass==='rcbihotel'){DB.auth.pass='delshotel';changed=true}   // old untouched default -> new default
   if(changed){
     DB.__savedAt=Date.now();
@@ -1333,6 +1334,50 @@ function migrateBrand(){
     if(DB.syncCode)pendingSync=true;
   }
   return changed;
+}
+
+
+/* ============ ROOM CATALOG (from "Recommended DEL'S Hotel Room Names") ============ */
+const ROOM_CATALOG=[
+ {old:'Single Regular',name:'Cozy Single',desc:'Ideal for solo travelers seeking a peaceful, comfortable, and affordable stay.',beds:'1 Single Bed',guests:'1 Guest',extras:[],rooms:['212'],rate:1150},
+ {old:'Single Premium',name:'Premier Single Balcony',desc:'Enjoy extra comfort with premium bedding and a private balcony for a refreshing escape.',beds:'1 Single Bed',guests:'1 Guest',extras:['Balcony View'],rooms:['217'],rate:1250},
+ {old:'Deluxe Regular',name:'Deluxe Queen',desc:'Relax in a cozy queen-bed retreat, perfect for couples or two guests seeking comfort and relaxation.',beds:'1 Queen Bed',guests:'2 Guests',extras:[],rooms:['203','206','207'],rate:1550},
+ {old:'Deluxe Premium',name:'Premier Queen Balcony',desc:'Experience elevated comfort in a stylish queen-bed room with a private balcony.',beds:'1 Queen Bed',guests:'2 Guests',extras:['Balcony View'],rooms:['201','202','204','205'],rate:1700},
+ {old:'Twin Bed',name:'Deluxe Twin Balcony',desc:'Perfect for friends or colleagues, featuring two comfortable single beds and a refreshing private balcony.',beds:'2 Single Beds',guests:'2 Guests',extras:['Balcony View'],rooms:['211','214'],rate:1700},
+ {old:'Triple Regular',name:'Triple Comfort',desc:'A welcoming retreat for three, offering comfort and convenience for families or small groups.',beds:'3 Single Beds',guests:'3 Guests',extras:[],rooms:['213'],rate:2400},
+ {old:'Triple Deluxe',name:'Premier Triple',desc:'Enjoy a relaxing group stay with three comfortable beds and thoughtfully prepared bedding.',beds:'3 Single Beds',guests:'3 Guests',extras:[],rooms:['215'],rate:2650},
+ {old:'Suite Bedroom',name:'Executive King Suite',desc:'Indulge in a refined stay featuring a spacious king-size bed and elegant comfort.',beds:'1 King Bed',guests:'2 Guests',extras:[],rooms:['208'],rate:2600},
+ {old:'Family Regular',name:'Family Comfort Suite',desc:'Create wonderful family memories in a cozy room featuring one queen bed and one single bed.',beds:'1 King Bed and 1 Single Bed',guests:'Good for 3 Guests',extras:[],rooms:['210'],rate:2900},
+ {old:'Family Premium',name:'Grand Family Suite',desc:'Designed for memorable family getaways, featuring two spacious king-size beds for up to four guests.',beds:'1 King Bed and 1 Single Bed',guests:'Good for 3 Guests',extras:[],rooms:['209'],rate:3200},
+ {old:'Pool View Deluxe',name:'Premier Pool View',desc:'Wake up to a refreshing poolside view and enjoy a relaxing stay in comfort and style.',beds:'1 Queen Bed',guests:'2 Guests',extras:['Pool and Balcony View'],rooms:['218','220','222','224','226','228'],rate:2000},
+ {old:'',name:'Premier Loft',desc:'Experience a unique and stylish loft retreat, offering a cozy atmosphere for a relaxing and memorable stay.',beds:'1 Queen Bed and 1 Single Bed',guests:'Good for 3 Guests',extras:[],rooms:['219','221','223','225','227','229','231'],rate:2800},
+ {old:'',name:'Premier Triple Pool View',desc:'Perfect for families or groups of three, offering spacious comfort and a refreshing view of the swimming pool.',beds:'3 Single Beds',guests:'Good for 3 Guests',extras:['Pool and Balcony View'],rooms:['230'],rate:3000}
+];
+const ROOM_COMMON_INCLUSIONS=['Free Wifi','Airconditioned','Complimentary Breakfast','Free Pool Access'];
+function catalogInclusions(t){return [t.beds,t.guests].concat(t.extras.slice(0,0)).concat(['Free Wifi','Airconditioned']).concat(t.extras).concat(['Complimentary Breakfast','Free Pool Access'])}
+function roomTypeOf(r){r=String(r||'').trim();return ROOM_CATALOG.find(t=>t.rooms.includes(r))||null}
+function roomRateOf(r){const t=roomTypeOf(r);return t?t.rate:0}
+function catalogRoomNums(){return ROOM_CATALOG.flatMap(t=>t.rooms).sort((a,b)=>Number(a)-Number(b))}
+function catalogRoomNames(){const m={};ROOM_CATALOG.forEach(t=>t.rooms.forEach(r=>{m[r]=t.name}));return m}
+function catalogRatePlans(){
+  return ROOM_CATALOG.map(t=>({id:uid(),name:t.name,price:t.rate,unit:'per night',
+    description:(t.old?'Formerly "'+t.old+'". ':'New room type. ')+t.desc+' · '+catalogInclusions(t).join(' · ')+' · Room'+(t.rooms.length>1?'s ':' ')+t.rooms.join(', ')+' ('+t.rooms.length+' room'+(t.rooms.length>1?'s':'')+')'}));
+}
+/* One-time (per saved copy) application of the new room names, numbers and nightly rates */
+function applyRoomCatalog(){
+  if(DB.roomCatalogV1)return false;
+  const prop=DB.activeProp||NEW_PROP_NAME;
+  const props=(Array.isArray(DB.properties)&&DB.properties.length)?DB.properties:[prop];
+  if(!DB.roomsByProp)DB.roomsByProp={};
+  if(!DB.roomNamesByProp)DB.roomNamesByProp={};
+  if(!DB.ratePlansByProp)DB.ratePlansByProp={};
+  props.filter(x=>x===NEW_PROP_NAME).forEach(pn=>{
+    DB.roomsByProp[pn]=catalogRoomNums();
+    DB.roomNamesByProp[pn]=catalogRoomNames();
+    DB.ratePlansByProp[pn]=catalogRatePlans();
+  });
+  DB.roomCatalogV1=true;
+  return true;
 }
 
 let pendingSync=false;              // true = local has changes not yet confirmed in the cloud
@@ -1962,13 +2007,8 @@ function renderDashboard(){
     .map(r=>`<div class="legend-row"><span class="legend-dot"><i style="background:${r[2]}"></i>${r[0]}</span><b>${pct(r[1])}%</b></div>`).join('');
 }
 
-/* ---- ROOMS BOARD (editable per property; defaults to 26 rooms: 101–113, 201–213) ---- */
-function defaultRoomNums(){
-  const rooms=[];
-  for(let i=1;i<=13;i++)rooms.push('1'+String(i).padStart(2,'0'));
-  for(let i=1;i<=13;i++)rooms.push('2'+String(i).padStart(2,'0'));
-  return rooms;
-}
+/* ---- ROOMS BOARD (editable per property; defaults to the 30 DEL'S rooms (201–231)) ---- */
+function defaultRoomNums(){return catalogRoomNums()}
 function roomList(){
   if(!DB.roomsByProp)DB.roomsByProp={};
   const prop=DB.activeProp;
@@ -1978,7 +2018,7 @@ function roomList(){
 function roomNameMap(){
   if(!DB.roomNamesByProp)DB.roomNamesByProp={};
   const prop=DB.activeProp;
-  if(!DB.roomNamesByProp[prop])DB.roomNamesByProp[prop]={};
+  if(!DB.roomNamesByProp[prop])DB.roomNamesByProp[prop]=(prop===NEW_PROP_NAME?catalogRoomNames():{});
   return DB.roomNamesByProp[prop];
 }
 function roomName(r){return (roomNameMap()[r]||'').trim()}
@@ -2019,9 +2059,9 @@ function saveRoomsBulk(){
   save();render();toast('Room list saved')
 }
 function resetRoomsDefault(){
-  if(!confirm('Reset room list to the default 26 rooms for this property? Room names will be cleared too.'))return;
+  if(!confirm('Reset to the 30 DEL\'S rooms and their new room names?'))return;
   DB.roomsByProp[DB.activeProp]=defaultRoomNums();
-  DB.roomNamesByProp[DB.activeProp]={};
+  DB.roomNamesByProp[DB.activeProp]=catalogRoomNames();
   save();render();toast('Room list reset to default')
 }
 function renderRoomsSettings(){
@@ -2093,13 +2133,7 @@ function renderRatesSettings(){
 }
 
 /* ---- RATE PLANS (nightly rates shown on the Rates & Packages page) ---- */
-function defaultRatePlans(){
-  return [
-    {id:uid(),name:'Standard Rate',price:2500,unit:'per night',description:'Our best available rate — flexible dates.'},
-    {id:uid(),name:'Weekend Rate',price:3200,unit:'per night',description:'Friday–Sunday nightly rate for peak weekend demand.'},
-    {id:uid(),name:'Long-Stay Rate',price:2100,unit:'per night',description:'Discounted nightly rate for stays of 7 nights or more.'}
-  ];
-}
+function defaultRatePlans(){return catalogRatePlans()}
 function ratePlanList(){
   if(!DB.ratePlansByProp)DB.ratePlansByProp={};
   const prop=DB.activeProp;
@@ -3974,7 +4008,7 @@ function openBookingModal(id,prefRoom,prefCheckin){
   </div>`:'';
   openModal(id?'Edit Booking':(prefRoom?'New Booking — Room '+esc(prefRoom):'New Booking'),`
     ${metaBar}
-    <div class="row-2">${field('Guest Name','f_guest',b.guest,'text','e.g. Maria Santos')}${field('Room','f_room',b.room,'text','e.g. 205')}</div>
+    <div class="row-2">${field('Guest Name','f_guest',b.guest,'text','e.g. Maria Santos')}${roomFieldHtml(b.room||prefRoom||'')}</div>
     <div class="row-2">${field('Phone Number','f_phone',b.phone,'text','e.g. 0917 123 4567')}${field('Address','f_address',b.address,'text','Street, City')}</div>
     <div class="row-2">
       <div class="field"><label>Transaction Type</label><select id="f_guesttype"><option value="private" ${(!b.guestType||b.guestType==='private')?'selected':''}>Private</option><option value="government" ${b.guestType==='government'?'selected':''}>Government</option></select></div>
@@ -4000,9 +4034,33 @@ function openBookingModal(id,prefRoom,prefCheckin){
   recalcCharges();
   attachDepositListeners();
   attachLiveConflictListener();
+  _autoRoomTotal=null;['f_room','f_cin','f_cout'].forEach(id=>{const el=document.getElementById(id);if(el){el.addEventListener('change',autoRoomRate);el.addEventListener('input',autoRoomRate)}});
+  autoRoomRate();
   renderBookMethodPicker();
   updateGrandTotal();
   updateDepositPreview();
+}
+
+function roomFieldHtml(v){
+  const names=roomNameMap();
+  const info='<div id="f_roomInfo" style="margin-top:6px;font-size:11.5px;color:var(--muted-2)"></div>';
+  if(v){
+    const nm=names[v]?` — ${esc(names[v])}`:'';
+    return `<div class="field"><label>Room 🔒</label><input id="f_room" type="text" value="${esc(v)}" readonly tabindex="-1" style="opacity:.85;cursor:not-allowed" title="Room cannot be edited">${info}</div>`;
+  }
+  const opts=roomList().map(r=>`<option value="${esc(r)}">${esc(r)}${names[r]?' — '+esc(names[r]):''}${roomRateOf(r)?' (₱'+roomRateOf(r).toLocaleString()+'/night)':''}</option>`).join('');
+  return `<div class="field"><label>Room</label><select id="f_room"><option value="">Select a room…</option>${opts}</select>${info}</div>`;
+}
+let _autoRoomTotal=null;
+function autoRoomRate(){
+  const room=val('f_room').trim(),t=roomTypeOf(room);
+  const info=document.getElementById('f_roomInfo'),tot=document.getElementById('f_total');
+  if(info)info.innerHTML=t?`<b style="color:var(--gold-bright)">${esc(t.name)}</b> · ${esc(t.beds)} · ${esc(t.guests)} · ₱${t.rate.toLocaleString()}/night`:'';
+  if(!t||!tot)return;
+  const n=nightsBetween(val('f_cin'),val('f_cout'));
+  if(n<=0)return;
+  const cur=moneyVal('f_total'),auto=t.rate*n;
+  if(!cur||cur===_autoRoomTotal){tot.value=commaFmt(auto);_autoRoomTotal=auto;updateGrandTotal();updateDepositPreview()}
 }
 function renderBookMethodPicker(){
   const wrap=document.getElementById('bookMethodPicker');if(!wrap)return;
